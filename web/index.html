@@ -101,14 +101,23 @@ function drawWeekly(rep) {
   const stepDate = rep.step ? String(rep.step.date).slice(0, 10) : null;
   if (weekChart) weekChart.destroy();
   if (!w.length) { $("weekNote").textContent = "비교할 주별 자료가 없습니다"; return; }
+  const ma = w.map((_, i) => {
+    const s = w.slice(Math.max(0, i - 3), i + 1).map(x => x.change);
+    return s.reduce((a, b) => a + b, 0) / s.length;
+  });
+  const k = stepDate ? w.findIndex(x => x.week_start === stepDate) : -1;
+  const lvl = w.map((_, i) => k < 0 ? null : (i < k ? rep.step.before : rep.step.after));
   weekChart = new Chart($("weekly"), {type: "line",
-    data: {labels: w.map(x => x.week_start),
-           datasets: [{label: "변화(°)", data: w.map(x => x.change), borderColor: "#1f6feb", tension: 0,
-                       pointRadius: w.map(x => x.week_start === stepDate ? 7 : 2),
-                       pointBackgroundColor: w.map(x => x.week_start === stepDate ? "#d00" : "#1f6feb")}]},
-    options: {plugins: {legend: {display: false}}, scales: {y: {title: {display: true, text: "도(°)"}}}}});
+    data: {labels: w.map(x => x.week_start), datasets: [
+      {label: "주별 변화", data: w.map(x => x.change), borderColor: "rgba(31,111,235,0.35)", tension: 0,
+       pointRadius: w.map(x => x.week_start === stepDate ? 7 : 1.5),
+       pointBackgroundColor: w.map(x => x.week_start === stepDate ? "#d00" : "rgba(31,111,235,0.6)")},
+      {label: "4주 이동평균", data: ma, borderColor: "#e8590c", borderWidth: 2.5, pointRadius: 0, tension: 0.2},
+      {label: "계단 전후 평균", data: lvl, borderColor: "#444", borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0}]},
+    options: {plugins: {legend: {position: "bottom"}}, scales: {y: {title: {display: true, text: "도(°)"}}}}});
   $("weekNote").textContent = rep.step
-    ? `빨간 점 = 가장 뚜렷한 변화 시점(${stepDate}), 기준 지점: ${rep.refs.join(", ")}` : "";
+    ? `빨간 점 = 가장 뚜렷한 변화 시점(${stepDate}), 전 ${rep.step.before.toFixed(0)}° → 후 ${rep.step.after.toFixed(0)}°, 기준 지점: ${rep.refs.join(", ")}`
+    : "";
 }
 
 async function load(refresh) {
