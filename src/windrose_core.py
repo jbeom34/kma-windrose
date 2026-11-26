@@ -20,7 +20,7 @@ def load_hourly(stn, start, end):
     """kma.db에서 [start, end) 기간의 시간자료(TM, WD, WS)를 읽기 전용으로 가져온다."""
     with sqlite3.connect(f"file:{DB}?mode=ro", uri=True) as conn:
         return pd.read_sql(
-            "SELECT TM, WD, WS FROM asos_hourly_clean WHERE STN=? AND TM>=? AND TM<?",
+            "SELECT TM, WD, WS, WS_SUSPECT FROM asos_hourly_clean WHERE STN=? AND TM>=? AND TM<?",
             conn, params=(stn, str(start), str(end)),
         )
 
