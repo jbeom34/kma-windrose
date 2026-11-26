@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>바람장미 특이점</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  body { font-family: "Malgun Gothic", sans-serif; margin: 0; padding: 16px; background: #f6f7f9; color: #222; }
+  h1 { font-size: 20px; margin: 0 0 12px; }
+  h2 { font-size: 16px; margin: 0 0 8px; }
+  .bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .card { background: #fff; border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; font-size: 13px; width: 100%; }
+  th, td { border-bottom: 1px solid #e5e7eb; padding: 4px 6px; text-align: left; white-space: nowrap; }
+  tbody tr:hover { background: #eef4ff; cursor: pointer; }
+  td.hot { color: #c62828; font-weight: bold; }
+  td.warm { color: #b26a00; font-weight: bold; }
+  #status { color: #555; }
+  .note { font-size: 13px; color: #555; margin-top: 6px; }
+  button, select, input { font-size: 14px; padding: 4px 8px; }
+</style>
+</head>
+<body>
+<h1>바람장미 특이점 (올해 vs 직전 10년)</h1>
+<div class="bar">
+  지점 <select id="stn"></select>
+  연도 <input id="year" type="number" style="width:80px">
+  <button id="load">불러오기</button>
+  <button id="refresh">보고서 다시 만들기</button>
+  <span id="status"></span>
+</div>
+
+<div class="card"><h2>요약</h2><ul id="summary"></ul></div>
+
+<div class="card"><h2>월별 판정 (행을 누르면 그 달의 바람장미)</h2><div class="scroll" id="months"></div></div>
+
+<div class="grid">
+  <div class="card">
+    <h2 id="roseTitle">바람장미</h2>
+    <canvas id="rose" height="320"></canvas>
+    <div class="note" id="roseNote"></div>
+  </div>
+  <div class="card">
+    <h2>주별 방위 변화 (기준 지점 대비, 작년 같은 주와 비교)</h2>
+    <canvas id="weekly" height="320"></canvas>
+    <div class="note" id="weekNote"></div>
+  </div>
+</div>
+
+<div class="card"><h2>자료 품질</h2><div class="scroll" id="qc"></div></div>
+<div class="card"><h2>작업 이력</h2><div class="scroll" id="maint"></div></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+let roseChart = null, weekChart = null;
+
+async function getJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) {
+    let msg = r.statusText;
+    try { msg = (await r.json()).detail || msg; } catch (e) {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+function table(el, rows, onClick) {
+  if (!rows || !rows.length) { el.innerHTML = "<p>(없음)</p>"; return; }
+  const cols = Object.keys(rows[0]);
+  const cls = (v) => v === "특이" ? ' class="hot"' : (v === "주목" ? ' class="warm"' : "");
+  el.innerHTML = "<table><thead><tr>" + cols.map(c => `<th>${esc(c)}</th>`).join("") + "</tr></thead><tbody>"
+    + rows.map((r, i) => `<tr data-i="${i}">` + cols.map(c => `<td${cls(r[c])}>${esc(r[c])}</td>`).join("") + "</tr>").join("")
+    + "</tbody></table>";
+  if (onClick) el.querySelectorAll("tbody tr").forEach(tr => tr.onclick = () => onClick(rows[tr.dataset.i]));
+}
+
+async function showRose(stn, year, month) {
+  const d = await getJSON(`/api/rose/${stn}/${year}/${month}`);
+  const total = (s) => d.dirs.map((_, k) => s.speeds.reduce((a, row) => a + row[k], 0));
+  const ds = [];
+  if (d.base) ds.push({label: `기준 평균(${d.base_years.length}년)`, data: total(d.base),
+                       borderColor: "#888", backgroundColor: "rgba(136,136,136,0.15)"});
+  ds.push({label: `${year}년 원자료`, data: total(d.raw), borderColor: "#1f6feb", backgroundColor: "rgba(31,111,235,0.12)"});
+  if (d.corrected) ds.push({label: `${year}년 보정(${d.correction_deg > 0 ? "+" : ""}${d.correction_deg.toFixed(1)}°)`,
+                            data: total(d.corrected), borderColor: "#e8590c", backgroundColor: "rgba(232,89,12,0.08)"});
+  $("roseTitle").textContent = `${month}월 바람장미 (방위별 비율 %, 정온 제외)`;
+  $("roseNote").textContent = `정온: 기준 ${d.base ? d.base.calm.toFixed(1) : "-"}%, 올해 ${d.raw.calm.toFixed(1)}%`
+    + ` / 기준 연도: ${d.base_years.join(", ")}`;
+  if (roseChart) roseChart.destroy();
+  roseChart = new Chart($("rose"), {type: "radar", data: {labels: d.dirs, datasets: ds},
+    options: {scales: {r: {beginAtZero: true}}, plugins: {legend: {position: "bottom"}}}});
+}
+
+function drawWeekly(rep) {
+  const w = rep.weekly || [];
+  const stepDate = rep.step ? String(rep.step.date).slice(0, 10) : null;
+  if (weekChart) weekChart.destroy();
+  if (!w.length) { $("weekNote").textContent = "비교할 주별 자료가 없습니다"; return; }
+  weekChart = new Chart($("weekly"), {type: "line",
+    data: {labels: w.map(x => x.week_start),
+           datasets: [{label: "변화(°)", data: w.map(x => x.change), borderColor: "#1f6feb", tension: 0,
+                       pointRadius: w.map(x => x.week_start === stepDate ? 7 : 2),
+                       pointBackgroundColor: w.map(x => x.week_start === stepDate ? "#d00" : "#1f6feb")}]},
+    options: {plugins: {legend: {display: false}}, scales: {y: {title: {display: true, text: "도(°)"}}}}});
+  $("weekNote").textContent = rep.step
+    ? `빨간 점 = 가장 뚜렷한 변화 시점(${stepDate}), 기준 지점: ${rep.refs.join(", ")}` : "";
+}
+
+async function load(refresh) {
+  const stn = $("stn").value, year = $("year").value;
+  $("status").textContent = refresh ? "보고서를 다시 만드는 중... (수십 초 걸릴 수 있음)" : "불러오는 중...";
+  try {
+    const rep = await getJSON(`/api/report/${stn}/${year}` + (refresh ? "?refresh=true" : ""));
+    $("summary").innerHTML = rep.summary.map(s => `<li>${esc(s)}</li>`).join("");
+    table($("months"), rep.months, r => showRose(stn, year, r["월"]));
+    table($("qc"), rep.qc);
+    table($("maint"), rep.maintenance);
+    drawWeekly(rep);
+    const pick = rep.months.find(r => r["판정(보정)"] === "특이")
+      || rep.months.find(r => r["판정(원)"] === "특이") || rep.months[rep.months.length - 1];
+    if (pick) await showRose(stn, year, pick["월"]);
+    $("status").textContent = "";
+  } catch (e) {
+    $("status").textContent = "오류: " + e.message;
+  }
+}
+
+(async function init() {
+  const st = await getJSON("/api/stations");
+  $("stn").innerHTML = st.map(s => `<option value="${s.stn}">${esc(s.name)} (${s.stn})</option>`).join("");
+  if (st.some(s => s.stn === 159)) $("stn").value = "159";
+  $("year").value = new Date().getFullYear();
+  $("load").onclick = () => load(false);
+  $("refresh").onclick = () => load(true);
+  load(false);
+})();
+</script>
+</body>
+</html>
