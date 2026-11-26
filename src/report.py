@@ -77,7 +77,7 @@ if step:
 after = None
 if args.after:
     after = tuple(int(x) for x in args.after.split("-"))
-elif step and step["is_step"]:
+elif step and step["is_step"] and matched:          # 작업 이력과 맞을 때만 자동 보정
     d = step["date"] + pd.Timedelta(days=3)
     if d.day > 10:
         d = d + pd.offsets.MonthBegin(1)
@@ -127,13 +127,22 @@ def qlist(tag):
 
 summary = [f"원자료 판정: 특이 {mlist(mrows, '판정(원)', ['특이'])}, 주목 {mlist(mrows, '판정(원)', ['주목'])}"]
 if step:
-    kind = "계단형" if step["is_step"] else "뚜렷한 계단 아님"
+    if step["is_step"] and matched:
+        kind = "계단형(작업 이력 일치, 자동 보정)"
+    elif step["is_step"]:
+        kind = "계단 후보(작업 이력 없음, 자동 보정 안 함)"
+    else:
+        kind = "뚜렷한 계단 아님"
     ev = "; ".join(f"{e['start']}~{e['end']} {e['kind']}" for e in matched) or "일치하는 작업 이력 없음"
     summary.append(f"방위 계단: {step['date']:%Y-%m-%d} 주, 변화 {step['delta']:+.0f}° (t={step['t']:.1f}) → {kind}, {ev}")
 if after and rot:
     summary.append(f"방위 보정({after[0]}-{after[1]:02d}부터, {corr_deg:+.1f}°) 후 판정: "
                    f"특이 {mlist(mrows, '판정(보정)', ['특이'])}, 주목 {mlist(mrows, '판정(보정)', ['주목'])}")
 summary.append(f"자료 품질: 관측 의심 {qlist('관측 의심')}, 관찰 {qlist('관찰')}, 정온 감소 {qlist('정온 감소')}")
+repl = [e for e in maint if str(e["kind"]).startswith("장비 교체") and year - L.N_BASE <= int(e["start"][:4]) < year]
+if repl:
+    summary.append("주의: 기준 기간에 장비 교체가 있음(" + ", ".join(e["start"] for e in repl)
+                   + ") → 정온·방위 비교에 교체 전후 장비 특성 차이가 섞임")
 
 
 def md_table(rows):
