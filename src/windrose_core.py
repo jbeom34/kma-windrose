@@ -16,9 +16,24 @@ SPEED_LABELS = ["~0.4(정온)", "0.5~3.3", "3.4~7.9", "8.0~13.8", "13.9~"]
 SPEED_EDGES = [0.5, 3.4, 8.0, 13.9]   # 각 계급의 시작값
 
 
+LOCAL_DB = Path("data/kma.db")
+
+
+def db_for(stn):
+    """이 프로젝트의 data/kma.db에 해당 지점 자료가 있으면 그것을, 없으면 기존 프로젝트 DB를 쓴다."""
+    if LOCAL_DB.exists():
+        with sqlite3.connect(f"file:{LOCAL_DB}?mode=ro", uri=True) as conn:
+            try:
+                if conn.execute("SELECT 1 FROM asos_hourly_clean WHERE STN=? LIMIT 1", (stn,)).fetchone():
+                    return LOCAL_DB
+            except sqlite3.OperationalError:
+                pass
+    return DB
+
+
 def load_hourly(stn, start, end):
-    """kma.db에서 [start, end) 기간의 시간자료(TM, WD, WS)를 읽기 전용으로 가져온다."""
-    with sqlite3.connect(f"file:{DB}?mode=ro", uri=True) as conn:
+    """[start, end) 기간의 시간자료(TM, WD, WS, WS_SUSPECT)를 읽기 전용으로 가져온다."""
+    with sqlite3.connect(f"file:{db_for(stn)}?mode=ro", uri=True) as conn:
         return pd.read_sql(
             "SELECT TM, WD, WS, WS_SUSPECT FROM asos_hourly_clean WHERE STN=? AND TM>=? AND TM<?",
             conn, params=(stn, str(start), str(end)),
